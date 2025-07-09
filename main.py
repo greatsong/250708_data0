@@ -1,9 +1,10 @@
 import streamlit as st
 import pandas as pd
+import altair as alt
 import io
 import re
 
-st.title("📊 상위 5개 행정구역 연령별 인구 시각화")
+st.title("📊 상위 5개 행정구역 연령별 인구 시각화 (정렬 보정)")
 
 uploaded_file = st.file_uploader("CSV 파일을 업로드하세요 (EUC-KR 또는 UTF-8)", type="csv")
 
@@ -31,7 +32,7 @@ if uploaded_file:
         age_cols = [col for col in df.columns if '2025년06월_계_' in col and ('세' in col or '100세 이상' in col)]
         df_slim = df[['행정구역', total_col] + age_cols].copy()
 
-        # 4. 열 이름 정리 (연령만 숫자 형태로)
+        # 4. 열 이름 정리
         def rename_age(col):
             if '100세 이상' in col:
                 return '100'
@@ -47,15 +48,23 @@ if uploaded_file:
         age_columns = [col for col in top5.columns if col.isdigit()]
         age_columns_sorted = sorted(age_columns, key=int)
 
-        # 7. 시각화용 데이터 구성 (전치)
-        chart_df = top5.set_index('행정구역')[age_columns_sorted].T
-        chart_df.index.name = '연령'
-        chart_df = chart_df.astype(int)
+        # 7. 시각화용 데이터 구성 (melt for Altair)
+        df_melted = top5.melt(id_vars='행정구역', value_vars=age_columns_sorted,
+                              var_name='연령', value_name='인구')
+        df_melted['연령'] = df_melted['연령'].astype(int)  # 정렬용
+        df_melted['인구'] = df_melted['인구'].astype(int)
 
-        # ✅ 정렬을 위해 인덱스를 int로 변환 후 다시 str로 되돌림
-        chart_df.index = chart_df.index.astype(int)
-        chart_df = chart_df.sort_index()
-        chart_df.index = chart_df.index.astype(str)
+        # 8. Altair 선 그래프 생성
+        chart = alt.Chart(df_melted).mark_line().encode(
+            x=alt.X('연령:Q', title='연령', axis=alt.Axis(labelAngle=0)),
+            y=alt.Y('인구:Q', title='인구 수'),
+            color='행정구역:N',
+            tooltip=['행정구역', '연령', '인구']
+        ).properties(
+            width=800,
+            height=500,
+            title='연령별 인구 분포 (상위 5개 지역)'
+        )
 
-        # 8. 시각화
-        st.line_chart(chart_df)
+        # 9. 출력
+        st.altair_chart(chart, use_container_width=True)
