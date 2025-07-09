@@ -2,69 +2,81 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 import io
-import re
 
-st.title("📊 상위 5개 행정구역 연령별 인구 시각화 (정렬 보정)")
+st.set_page_config(page_title="연령별 인구 시각화", layout="wide")
+st.title("📊 2025년 6월 기준 연령별 인구 현황")
 
-uploaded_file = st.file_uploader("CSV 파일을 업로드하세요 (EUC-KR 또는 UTF-8)", type="csv")
+# 파일 업로드 or 기본 파일
+uploaded_file = st.file_uploader("CSV 파일 업로드 (UTF-8 또는 EUC-KR)", type=["csv"])
+default_path = "age.csv"
 
-if uploaded_file:
-    raw_bytes = uploaded_file.read()
-
-    # 1. 인코딩 자동 판별
-    for enc in ['euc-kr', 'utf-8']:
+# 파일 로딩 함수
+def load_csv(file):
+    encodings = ["utf-8", "euc-kr"]
+    for enc in encodings:
         try:
-            text = raw_bytes.decode(enc)
-            df = pd.read_csv(io.StringIO(text))
-            st.success(f"✅ 파일 인코딩: {enc.upper()} 로 성공적으로 읽었습니다.")
-            break
-        except Exception:
-            df = None
+            df = pd.read_csv(file, encoding=enc)
+            return df
+        except:
+            continue
+    st.error("❌ 파일을 불러오는 데 실패했습니다. 인코딩을 확인해주세요.")
+    return None
 
-    if df is None:
-        st.error("❌ CSV 파일을 읽을 수 없습니다. EUC-KR 또는 UTF-8 인코딩인지 확인해주세요.")
-    else:
-        # 2. 행정구역 괄호 제거
-        df['행정구역'] = df['행정구역'].str.replace(r'\(.*?\)', '', regex=True).str.strip()
+# 파일 로드
+if uploaded_file:
+    df_raw = load_csv(uploaded_file)
+else:
+    try:
+        df_raw = pd.read_csv(default_path, encoding="utf-8")
+    except:
+        df_raw = pd.read_csv(default_path, encoding="euc-kr")
 
-        # 3. 필요한 열 추출
-        total_col = '2025년06월_계_총인구수'
-        age_cols = [col for col in df.columns if '2025년06월_계_' in col and ('세' in col or '100세 이상' in col)]
-        df_slim = df[['행정구역', total_col] + age_cols].copy()
+if df_raw is not None:
+    df = df_raw.copy()
 
-        # 4. 열 이름 정리
-        def rename_age(col):
-            if '100세 이상' in col:
-                return '100'
-            return col.split('_')[-1].replace('세', '')
+    # 연령 컬럼 선택
+    age_columns = [col for col in df.columns if col.startswith("2025년06월_계_") and '세' in col]
 
-        df_slim.rename(columns={col: rename_age(col) for col in age_cols}, inplace=True)
+    # 연령 컬럼 이름 정리
+    age_map = {}
+    for col in age_columns:
+        if '100세 이상' in col:
+            age_map[col] = 100
+        else:
+            age_num = int(col.split('_')[-1].replace('세', ''))
+            age_map[col] = age_num
 
-        # 5. 총인구수 숫자형 변환 및 상위 5개 지역 추출
-        df_slim[total_col] = pd.to_numeric(df_slim[total_col], errors='coerce')
-        top5 = df_slim.sort_values(by=total_col, ascending=False).head(5)
+    df_age = df[['행정구역', '2025년06월_계_총인구수'] + age_columns].copy()
+    df_age.rename(columns=age_map, inplace=True)
 
-        # 6. 연령 컬럼만 추출 및 정렬
-        age_columns = [col for col in top5.columns if col.isdigit()]
-        age_columns_sorted = sorted(age_columns, key=int)
+    # 시도 단위만 필터링 (코드: **00000000)
+    df_age = df_age[df_age['행정구역'].str.contains(r'\(\d{2}00000000\)', regex=True)].copy()
+    df_age['행정구역'] = df_age['행정구역'].str.replace(r'\s*\(\d+\)', '', regex=True)
 
-        # 7. 시각화용 데이터 구성 (melt for Altair)
-        df_melted = top5.melt(id_vars='행정구역', value_vars=age_columns_sorted,
-                              var_name='연령', value_name='인구')
-        df_melted['연령'] = df_melted['연령'].astype(int)  # 정렬용
-        df_melted['인구'] = df_melted['인구'].astype(int)
+    # 총인구수 정수 변환
+    df_age['총인구수'] = df_age['2025년06월_계_총인구수']
+    df_age = df_age.drop(columns=['2025년06월_계_총인구수'])
 
-        # 8. Altair 선 그래프 생성
-        chart = alt.Chart(df_melted).mark_line().encode(
-            x=alt.X('연령:Q', title='연령', axis=alt.Axis(labelAngle=0)),
-            y=alt.Y('인구:Q', title='인구 수'),
-            color='행정구역:N',
-            tooltip=['행정구역', '연령', '인구']
-        ).properties(
-            width=800,
-            height=500,
-            title='연령별 인구 분포 (상위 5개 지역)'
-        )
+    # 상위 5개 시도
+    top5_df = df_age.sort_values('총인구수', ascending=False).head(5)
 
-        # 9. 출력
-        st.altair_chart(chart, use_container_width=True)
+    # melt로 변환: 연령별 선그래프용
+    df_melted = top5_df.melt(id_vars=['행정구역', '총인구수'], var_name='연령', value_name='인구수')
+    df_melted['연령'] = df_melted['연령'].astype(int)
+
+    # Altair 시각화
+    chart = alt.Chart(df_melted).mark_line(point=True).encode(
+        x=alt.X('연령:O', title='연령', sort='ascending'),
+        y=alt.Y('인구수:Q', title='인구수'),
+        color=alt.Color('행정구역:N', title='시도'),
+        tooltip=['행정구역', '연령', '인구수']
+    ).properties(
+        width=800,
+        height=500,
+        title='상위 5개 시도의 연령별 인구 분포'
+    )
+
+    st.altair_chart(chart, use_container_width=True)
+
+    with st.expander("🔍 원본 데이터 보기"):
+        st.dataframe(top5_df, use_container_width=True)
