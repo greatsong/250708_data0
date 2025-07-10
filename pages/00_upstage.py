@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import altair as alt
+import os
 
 st.title('📊 2025년 6월 연령별 인구 현황 분석')
 
@@ -8,25 +9,43 @@ st.title('📊 2025년 6월 연령별 인구 현황 분석')
 uploaded_file = st.file_uploader("CSV 파일 업로드", type="csv")
 file_path = 'data.csv' if not uploaded_file else None
 
-if uploaded_file is not None:
-    # 인코딩 자동 감지
-    try:
-        df = pd.read_csv(uploaded_file, encoding='utf-8')
-    except UnicodeDecodeError:
-        df = pd.read_csv(uploaded_file, encoding='euc-kr')
-else:
-    # 기본 파일 로드 시도
-    try:
-        df = pd.read_csv(file_path, encoding='utf-8')
-    except (UnicodeDecodeError, FileNotFoundError):
-        st.error("파일을 찾을 수 없거나 인코딩 오류가 발생했습니다. UTF-8 또는 EUC-KR로 저장된 CSV 파일을 업로드해주세요.")
-        st.stop()
+df = None
+try:
+    if uploaded_file is not None:
+        # 업로드된 파일 처리
+        try:
+            df = pd.read_csv(uploaded_file, encoding='utf-8', nrows=100)
+            if df.empty:
+                raise pd.errors.EmptyDataError()
+        except UnicodeDecodeError:
+            df = pd.read_csv(uploaded_file, encoding='euc-kr', nrows=100)
+            if df.empty:
+                raise pd.errors.EmptyDataError()
+    else:
+        # 기본 파일 처리
+        if not os.path.exists(file_path):
+            st.error("기본 파일(data.csv)이 존재하지 않습니다. CSV 파일을 업로드해주세요.")
+            st.stop()
+        try:
+            df = pd.read_csv(file_path, encoding='utf-8', nrows=100)
+            if df.empty:
+                raise pd.errors.EmptyDataError()
+        except UnicodeDecodeError:
+            df = pd.read_csv(file_path, encoding='euc-kr', nrows=100)
+            if df.empty:
+                raise pd.errors.EmptyDataError()
+except pd.errors.EmptyDataError:
+    st.error("업로드된 파일이 비어 있습니다. 유효한 CSV 파일을 사용해주세요.")
+    st.stop()
 
-# 디버그: 원본 컬럼명 출력
+# 디버그: 원본 데이터 구조 확인
 with st.expander("🔍 원본 데이터 구조 확인"):
-    sample = pd.read_csv(uploaded_file if uploaded_file else file_path, nrows=3)
-    st.write("원본 컬럼명:", sample.columns.tolist())
-    st.write("데이터 샘플:", sample)
+    try:
+        sample = pd.read_csv(uploaded_file if uploaded_file else file_path, nrows=3)
+        st.write("원본 컬럼명:", sample.columns.tolist())
+        st.write("데이터 샘플:", sample)
+    except Exception as e:
+        st.warning(f"디버그 정보 로드 실패: {str(e)}")
 
 # 컬럼 전처리 (공백 제거 및 특수문자 처리)
 df.columns = [col.replace('2025년06월_계_', '').replace('세', '').strip() for col in df.columns]
