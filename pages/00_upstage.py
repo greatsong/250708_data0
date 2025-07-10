@@ -20,27 +20,35 @@ else:
         st.error("파일을 찾을 수 없거나 인코딩 오류가 발생했습니다. UTF-8 또는 EUC-KR로 저장된 CSV 파일을 업로드해주세요.")
         st.stop()
 
-# 컬럼 전처리
-df.columns = [col.replace('2025년06월_계_', '').replace('세', '') for col in df.columns]
+# 컬럼 전처리 (공백 제거 및 특수문자 처리)
+df.columns = [col.replace('2025년06월_계_', '').replace('세', '').strip() for col in df.columns]
 
-# 비숫자 컬럼 제거 (예: '100 이상')
+# 필수 컬럼 존재 여부 검증
+required_cols = ['행정구역', '총인구수']
+missing_cols = [col for col in required_cols if col not in df.columns]
+if missing_cols:
+    st.error(f"필수 컬럼이 누락되었습니다: {', '.join(missing_cols)}. 데이터 형식을 확인해주세요.")
+    st.stop()
+
+# 숫자형 컬럼 추출
 numeric_cols = []
 for col in df.columns:
-    if col in ['행정구역', '총인구수']:
+    if col in required_cols:
         continue
     if col.replace('.', '', 1).isdigit():
         numeric_cols.append(col)
     else:
         df = df.drop(columns=[col], errors='ignore')
 
-# 데이터 용융 (long format으로 변환)
+# 숫자형 컬럼이 없는 경우 처리
 if not numeric_cols:
     st.error("연령 관련 숫자 컬럼이 없습니다. 데이터 형식을 확인해주세요.")
     st.stop()
 
+# 데이터 용융 (long format으로 변환)
 df_long = pd.melt(
     df, 
-    id_vars=['행정구역', '총인구수'], 
+    id_vars=required_cols, 
     value_vars=numeric_cols, 
     var_name='연령', 
     value_name='인구수'
@@ -51,9 +59,14 @@ df_long['연령'] = df_long['연령'].astype(int)
 try:
     top_regions = df.groupby('행정구역')['총인구수'].sum().nlargest(5).index.tolist()
     df_top = df_long[df_long['행정구역'].isin(top_regions)]
-except KeyError:
-    st.error("데이터에 필요한 컬럼이 없습니다. '행정구역' 또는 '총인구수' 컬럼을 확인해주세요.")
+except Exception as e:
+    st.error(f"데이터 처리 중 오류 발생: {str(e)}. '행정구역' 또는 '총인구수' 컬럼을 확인해주세요.")
     st.stop()
+
+# 디버깅: 컬럼 정보 표시
+with st.expander("💡 데이터 구조 확인"):
+    st.write("최종 컬럼 목록:", df.columns.tolist())
+    st.write("데이터 샘플:", df.head(3))
 
 # 시각화
 chart = alt.Chart(df_top).mark_line().encode(
@@ -65,7 +78,7 @@ chart = alt.Chart(df_top).mark_line().encode(
     width=800,
     height=500
 ).configure_axis(
- labelFontSize=12,
+    labelFontSize=12,
     titleFontSize=14
 )
 
@@ -79,7 +92,3 @@ st.dataframe(
     .reset_index()
     .style.format({'총인구수': '{:,}명'})
 )
-
-# 데이터 샘플 표시
-st.subheader('📊 원본 데이터 샘플')
-st.dataframe(df.head(3))
