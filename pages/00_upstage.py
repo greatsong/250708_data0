@@ -6,6 +6,8 @@ st.title('📊 2025년 6월 연령별 인구 현황 분석')
 
 # 파일 업로드 및 기본 파일 로드
 uploaded_file = st.file_uploader("CSV 파일 업로드", type="csv")
+file_path = 'data.csv' if not uploaded_file else None
+
 if uploaded_file is not None:
     # 인코딩 자동 감지
     try:
@@ -15,13 +17,23 @@ if uploaded_file is not None:
 else:
     # 기본 파일 로드 시도
     try:
-        df = pd.read_csv('data.csv', encoding='utf-8')
+        df = pd.read_csv(file_path, encoding='utf-8')
     except (UnicodeDecodeError, FileNotFoundError):
         st.error("파일을 찾을 수 없거나 인코딩 오류가 발생했습니다. UTF-8 또는 EUC-KR로 저장된 CSV 파일을 업로드해주세요.")
         st.stop()
 
+# 디버그: 원본 컬럼명 출력
+with st.expander("🔍 원본 데이터 구조 확인"):
+    sample = pd.read_csv(uploaded_file if uploaded_file else file_path, nrows=3)
+    st.write("원본 컬럼명:", sample.columns.tolist())
+    st.write("데이터 샘플:", sample)
+
 # 컬럼 전처리 (공백 제거 및 특수문자 처리)
 df.columns = [col.replace('2025년06월_계_', '').replace('세', '').strip() for col in df.columns]
+
+# 디버그: 전처리 후 컬럼명 출력
+with st.expander("🔍 전처리 후 컬럼명 확인"):
+    st.write("전처리 후 컬럼명:", df.columns.tolist())
 
 # 필수 컬럼 존재 여부 검증
 required_cols = ['행정구역', '총인구수']
@@ -63,14 +75,9 @@ except Exception as e:
     st.error(f"데이터 처리 중 오류 발생: {str(e)}. '행정구역' 또는 '총인구수' 컬럼을 확인해주세요.")
     st.stop()
 
-# 디버깅: 컬럼 정보 표시
-with st.expander("💡 데이터 구조 확인"):
-    st.write("최종 컬럼 목록:", df.columns.tolist())
-    st.write("데이터 샘플:", df.head(3))
-
 # 시각화
 chart = alt.Chart(df_top).mark_line().encode(
-    x=alt.X('인구수:Q', title='인구 수', scale=alt.Scale(type='log')),
+    x=alt.X('인구수:Q', title='인구 수', scale=alt.Scale(type='log', domain=(1, None))),
     y=alt.Y('연령:N', title='연령', sort='-x'),
     color=alt.Color('행정구역:N', legend=alt.Legend(title='행정구역')),
     tooltip=['행정구역', '연령', alt.Tooltip('인구수:Q', format=',.0f')]
@@ -86,9 +93,5 @@ st.altair_chart(chart, use_container_width=True)
 
 # 상위 5개 행정구역 표 표시
 st.subheader('🏆 총인구수 상위 5개 행정구역')
-st.dataframe(
-    df.groupby('행정구역')['총인구수'].sum()
-    .nlargest(5)
-    .reset_index()
-    .style.format({'총인구수': '{:,}명'})
-)
+top_regions_df = df.groupby('행정구역')['총인구수'].sum().nlargest(5).reset_index()
+st.dataframe(top_regions_df.style.format({'총인구수': '{:,}명'}))
