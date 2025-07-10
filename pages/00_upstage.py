@@ -77,11 +77,24 @@ except Exception as e:
     st.error(f"데이터 로드 실패: {str(e)}. 파일 형식을 확인해주세요.")
     st.stop()
 
-# 컬럼 전처리 (공백 제거 및 특수문자 처리)
-df_full.columns = [col.replace('2025년06월_계_', '').replace('세', '').strip() for col in df_full.columns]
+# 컬럼 전처리 (행정구역, 총인구수는 보존)
+new_columns = []
+for col in df_full.columns:
+    if '행정구역' in col or '총인구수' in col:
+        new_columns.append(col)
+    else:
+        cleaned = col.replace('2025년06월_계_', '').replace('세', '').strip()
+        new_columns.append(cleaned)
+df_full.columns = new_columns
 
-# 디버그: 전처리 후 컬럼명 출력
-with st.expander("🔍 전처리 후 컬럼명 확인"):
+# 디버그: 전처리 전후 컬럼명 비교
+with st.expander("🔍 전처리 전후 컬럼명 비교"):
+    original_cols = pd.read_csv(
+        uploaded_file if uploaded_file else file_path, 
+        nrows=0, 
+        encoding=encoding_used
+    ).columns.tolist()
+    st.write("원본 컬럼명:", original_cols)
     st.write("전처리 후 컬럼명:", df_full.columns.tolist())
 
 # 필수 컬럼 존재 여부 검증
