@@ -10,66 +10,90 @@ uploaded_file = st.file_uploader("CSV 파일 업로드", type="csv")
 file_path = 'data.csv' if not uploaded_file else None
 
 df = None
+encoding_used = None  # 사용할 인코딩 저장
+
 try:
     if uploaded_file is not None:
         # 업로드된 파일 처리
         try:
-            df = pd.read_csv(uploaded_file, encoding='utf-8', nrows=100)
+            # BOM 처리 포함 UTF-8 시도
+            df = pd.read_csv(uploaded_file, encoding='utf-8-sig', nrows=100)
             if df.empty:
                 raise pd.errors.EmptyDataError()
+            encoding_used = 'utf-8-sig'
         except UnicodeDecodeError:
+            # EUC-KR 시도
             df = pd.read_csv(uploaded_file, encoding='euc-kr', nrows=100)
             if df.empty:
                 raise pd.errors.EmptyDataError()
+            encoding_used = 'euc-kr'
     else:
         # 기본 파일 처리
         if not os.path.exists(file_path):
             st.error("기본 파일(data.csv)이 존재하지 않습니다. CSV 파일을 업로드해주세요.")
             st.stop()
         try:
-            df = pd.read_csv(file_path, encoding='utf-8', nrows=100)
+            # BOM 처리 포함 UTF-8 시도
+            df = pd.read_csv(file_path, encoding='utf-8-sig', nrows=100)
             if df.empty:
                 raise pd.errors.EmptyDataError()
+            encoding_used = 'utf-8-sig'
         except UnicodeDecodeError:
+            # EUC-KR 시도
             df = pd.read_csv(file_path, encoding='euc-kr', nrows=100)
             if df.empty:
                 raise pd.errors.EmptyDataError()
+            encoding_used = 'euc-kr'
 except pd.errors.EmptyDataError:
     st.error("업로드된 파일이 비어 있습니다. 유효한 CSV 파일을 사용해주세요.")
     st.stop()
 
-# 디버그: 원본 데이터 구조 확인
+# 디버그: 원본 데이터 구조 확인 (인코딩 사용)
 with st.expander("🔍 원본 데이터 구조 확인"):
     try:
-        sample = pd.read_csv(uploaded_file if uploaded_file else file_path, nrows=3)
+        sample = pd.read_csv(
+            uploaded_file if uploaded_file else file_path, 
+            nrows=3, 
+            encoding=encoding_used
+        )
         st.write("원본 컬럼명:", sample.columns.tolist())
         st.write("데이터 샘플:", sample)
     except Exception as e:
-        st.warning(f"디버그 정보 로드 실패: {str(e)}")
+        st.warning(f"디버그 정보 로드 실패: {str(e)}. 인코딩 문제 또는 파일 손상 가능성 있음")
+
+# 전체 데이터 로드 (디버그 외)
+try:
+    df_full = pd.read_csv(
+        uploaded_file if uploaded_file else file_path, 
+        encoding=encoding_used
+    )
+except Exception as e:
+    st.error(f"데이터 로드 실패: {str(e)}. 파일 형식을 확인해주세요.")
+    st.stop()
 
 # 컬럼 전처리 (공백 제거 및 특수문자 처리)
-df.columns = [col.replace('2025년06월_계_', '').replace('세', '').strip() for col in df.columns]
+df_full.columns = [col.replace('2025년06월_계_', '').replace('세', '').strip() for col in df_full.columns]
 
 # 디버그: 전처리 후 컬럼명 출력
 with st.expander("🔍 전처리 후 컬럼명 확인"):
-    st.write("전처리 후 컬럼명:", df.columns.tolist())
+    st.write("전처리 후 컬럼명:", df_full.columns.tolist())
 
 # 필수 컬럼 존재 여부 검증
 required_cols = ['행정구역', '총인구수']
-missing_cols = [col for col in required_cols if col not in df.columns]
+missing_cols = [col for col in required_cols if col not in df_full.columns]
 if missing_cols:
     st.error(f"필수 컬럼이 누락되었습니다: {', '.join(missing_cols)}. 데이터 형식을 확인해주세요.")
     st.stop()
 
 # 숫자형 컬럼 추출
 numeric_cols = []
-for col in df.columns:
+for col in df_full.columns:
     if col in required_cols:
         continue
     if col.replace('.', '', 1).isdigit():
         numeric_cols.append(col)
     else:
-        df = df.drop(columns=[col], errors='ignore')
+        df_full = df_full.drop(columns=[col], errors='ignore')
 
 # 숫자형 컬럼이 없는 경우 처리
 if not numeric_cols:
@@ -78,7 +102,7 @@ if not numeric_cols:
 
 # 데이터 용융 (long format으로 변환)
 df_long = pd.melt(
-    df, 
+    df_full, 
     id_vars=required_cols, 
     value_vars=numeric_cols, 
     var_name='연령', 
@@ -88,7 +112,7 @@ df_long['연령'] = df_long['연령'].astype(int)
 
 # 상위 5개 행정구역 추출
 try:
-    top_regions = df.groupby('행정구역')['총인구수'].sum().nlargest(5).index.tolist()
+    top_regions = df_full.groupby('행정구역')['총인구수'].sum().nlargest(5).index.tolist()
     df_top = df_long[df_long['행정구역'].isin(top_regions)]
 except Exception as e:
     st.error(f"데이터 처리 중 오류 발생: {str(e)}. '행정구역' 또는 '총인구수' 컬럼을 확인해주세요.")
@@ -112,5 +136,5 @@ st.altair_chart(chart, use_container_width=True)
 
 # 상위 5개 행정구역 표 표시
 st.subheader('🏆 총인구수 상위 5개 행정구역')
-top_regions_df = df.groupby('행정구역')['총인구수'].sum().nlargest(5).reset_index()
+top_regions_df = df_full.groupby('행정구역')['총인구수'].sum().nlargest(5).reset_index()
 st.dataframe(top_regions_df.style.format({'총인구수': '{:,}명'}))
